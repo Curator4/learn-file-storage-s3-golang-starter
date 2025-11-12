@@ -88,13 +88,21 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// ch4 - Update the handlerUploadVideo to get the aspect ratio of the video file from the temporary file once it's saved to disk. Depending on the aspect ratio, add a "landscape", "portrait", or "other" prefix to the key before uploading it to S3.
+	aspectRatio, err := getVideoAspectRatio(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "failed to get aspect ratio from video", err)
+		return
+	}
+
 	// 8. Reset the tempFile's file pointer to the beginning with .Seek(0, io.SeekStart) - this will allow us to read the file again from the beginning
 	tempFile.Seek(0, io.SeekStart)
 
 	// 9. Put the object into S3 using PutObject.
 	fileKeyBytes := make([]byte, 32)
 	_, err = rand.Read(fileKeyBytes)
-	fileKey := base64.RawURLEncoding.EncodeToString(fileKeyBytes)
+	fileKeyRaw := base64.RawURLEncoding.EncodeToString(fileKeyBytes)
+	fileKey := fmt.Sprintf("%s/%s", aspectRatio, fileKeyRaw)
 
 	objectParams := s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
