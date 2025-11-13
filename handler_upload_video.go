@@ -95,8 +95,22 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// ch5 - Update handlerUploadVideo to create a processed version of the video. Upload the processed video to S3, and discard the original.
+	processedTempFileName, err := processVideoForFastStart(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "failed to process video moov", err)
+		return
+	}
+	processedTempFile, err := os.Open(processedTempFileName)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "failed to open processed video", err)
+		return
+	}
+	defer os.Remove(processedTempFile.Name())
+	defer processedTempFile.Close()
+
 	// 8. Reset the tempFile's file pointer to the beginning with .Seek(0, io.SeekStart) - this will allow us to read the file again from the beginning
-	tempFile.Seek(0, io.SeekStart)
+	processedTempFile.Seek(0, io.SeekStart)
 
 	// 9. Put the object into S3 using PutObject.
 	fileKeyBytes := make([]byte, 32)
@@ -107,7 +121,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	objectParams := s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
 		Key:         &fileKey,
-		Body:        tempFile,
+		Body:        processedTempFile,
 		ContentType: &mediaType,
 	}
 	_, err = cfg.s3Client.PutObject(context.Background(), &objectParams)
@@ -116,9 +130,8 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// 10. Update the VideoURL of the video record in the database with the S3 bucket and key. S3 URLs are in the format https://<bucket-name>.s3.<region>.amazonaws.com/<key>. Make sure you use the correct region and bucket name!
-	s3URL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.s3Bucket, cfg.s3Region, fileKey)
-	video.VideoURL = &s3URL
+	videoURL := fmt.Sprintf("https://%s/%s", cfg.s3CfDistribution, fileKey)
+	video.VideoURL = &videoURL
 
 	err = cfg.db.UpdateVideo(video)
 	if err != nil {
